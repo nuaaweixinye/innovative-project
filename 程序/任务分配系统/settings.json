@@ -1,0 +1,86 @@
+{
+  "SeeDocsAt": "https://github.com/microsoft/AirSim/blob/main/docs/settings.md",
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "ClockSpeed": 1.0,
+  "DroneDefaults": {
+    "VehicleType": "SimpleFlight",
+    "AutoCreate": true,
+    "EnableBattery": true,
+    "BatteryCapacity": 300.0,
+    "BatteryInitialCharge": 100.0,
+    "BatteryDischargeRate": 20.0,
+    "BatteryChargeRate": 40.0,
+    "Sensors": {
+      "DepthCamera": {
+        "SensorType": 2,
+        "Enabled": true,
+        "X": 0.3,
+        "Y": 0.0,
+        "Z": -0.1,
+        "Roll": 0.0,
+        "Pitch": 0.0,
+        "Yaw": 0.0,
+        "ImageSizeX": 640,
+        "ImageSizeY": 480,
+        "FOV_Degrees": 90.0,
+        "DepthScale": 1000.0,
+        "DepthMin": 0.2,
+        "DepthMax": 100.0,
+        "DataRate": 30.0
+      },
+      "LidarSensor": {
+        "SensorType": 6,
+        "Enabled": true,
+        "X": 0.0,
+        "Y": 0.0,
+        "Z": -0.2,
+        "Roll": 0.0,
+        "Pitch": 0.0,
+        "Yaw": 0.0,
+        "NumberOfChannels": 16,
+        "PointsPerSecond": 100000,
+        "RotationsPerSecond": 10.0,
+        "HorizontalFOV_Degrees": 360.0,
+        "VerticalFOV_Degrees": 30.0,
+        "RangeMin": 0.1,
+        "RangeMax": 50.0,
+        "DataRate": 10.0,
+        "PointFormat": "XYZRGB",
+        "DrawDebugPoints": true
+      }
+    }
+  },
+  "Vehicles": {
+    "Drone0": {
+      "VehicleType": "SimpleFlight",
+      "AutoCreate": true,
+      "X": 0.0,
+      "Y": 0.0,
+      "Z": -0.5,
+      "Yaw": 0.0,
+      "LocalHostIp": "127.0.0.1",
+      "LocalHostPort": 41451
+    },
+    "Drone1": {
+      "VehicleType": "SimpleFlight",
+      "AutoCreate": true,
+      "X": 3.0,
+      "Y": 0.0,
+      "Z": -0.5,
+      "Yaw": 0.0,
+      "LocalHostIp": "127.0.0.1",
+      "LocalHostPort": 41452
+    },
+    "Drone2": {
+      "VehicleType": "SimpleFlight",
+      "AutoCreate": true,
+      "X": 0.0,
+      "Y": 3.0,
+      "Z": -0.5,
+      "Yaw": 0.0,
+      "LocalHostIp": "127.0.0.1",
+      "LocalHostPort": 41453
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "SeeDocsAt": "https://github.com/Microsoft/AirSim/blob/master/docs/settings.md",
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "ClockType": "SteppableClock",
+  "Vehicles": {
+    "Drone": {
+      "VehicleType": "SimpleFlight",
+      "DefaultVehicleState": "Armed",
+      "AutoCreate": true,
+      "Sensors": {
+        "Lidar1": {
+          "SensorType": 6,
+          "Enabled": true,
+          "NumberOfChannels": 1,
+          "RotationsPerSecond": 10,
+          "PointsPerSecond": 10000,
+          "HorizontalFOVDegrees": 180,
+          "VerticalFOVDegrees": 10,
+          "X": 0,
+          "Y": 0,
+          "Z": -0.3,
+          "Roll": 0,
+          "Pitch": 0,
+          "Yaw": 0,
+          "MinDistance": 0.05,
+          "MaxDistance": 100,
+          "DataFrame": "SensorLocalFrame"
+        }
+      },
+      "LocalPositionNED": {
+        "X": 0,
+        "Y": 0,
+        "Z": 0
+      }
+    }
+  },
+  "ApiControl": true,
+  "PhysicsEngineName": "FastPhysicsEngine",
+  "LogMessagesVisible": true,
+  "ViewMode": "FlyWithMe"
+}

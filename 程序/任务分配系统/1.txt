@@ -1,0 +1,619 @@
+import airsim
+import random
+import tkinter as tk
+import time
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import threading
+
+# 设置matplotlib支持中文显示
+def setup_matplotlib_font():
+    plt.rcParams["font.family"] = ["SimHei", "sans-serif"]
+    plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
+
+# 在模块加载时就设置字体
+setup_matplotlib_font()
+
+
+
+
+class Swarm:
+    def __init__(self,count=3):
+        self.count = count
+        self._client = airsim.MultirotorClient()
+        
+        # 初始化无人机列表并为每架无人机启用控制
+        self.drone_list = []
+        for i in range(self.count):
+            drone_name = "Drone"+str(i)
+            self.drone_list.append(drone_name)
+            # 为每架无人机单独启用API控制和解锁电机
+            self._client.enableApiControl(True, vehicle_name=drone_name)
+            self._client.armDisarm(True, vehicle_name=drone_name)
+
+        
+    
+    def takeoff(self):
+        tasks=[]
+        for i in range(self.count):
+            tasks.append(self._client.takeoffAsync(vehicle_name=self.drone_list[i]))
+        for task in tasks:
+            task.join()
+            
+    def land(self):    
+        #关闭电机，释放API控制
+        for i in range(self.count):
+            self._client.armDisarm(False, vehicle_name=self.drone_list[i])
+            self._client.enableApiControl(False, vehicle_name=self.drone_list[i])
+        print("已释放API控制和解锁电机")
+            
+    
+    def moveByVelocity(self,velocity_x,velocity_y,velocity_z,duration):
+        tasks=[]
+        for i in range(self.count):
+            tasks.append(self._client.moveByVelocityAsync(vehicle_name=self.drone_list[i],
+                                                          vx=velocity_x,
+                                                          vy=velocity_y,
+                                                          vz=velocity_z,
+                                                          duration=duration))
+        for task in tasks:
+            task.join()
+
+    def getPosition(self):
+        """
+        获取无人机位置
+        Returns:
+            list: 无人机位置列表，每个元素为airsim.Vector3r类型,ned坐标
+        """
+        positions=[]
+        for drone in self.drone_list:
+            position=self._client.getMultirotorState(vehicle_name=drone).kinematics_estimated.position
+            positions.append(position)
+        return positions
+
+
+class State:
+    def __init__(self):
+        self.position=[0.0,0.0,0.0]
+        self.orientation=[0.0,0.0,0.0,0.0]
+        self.linear_velocity=[0.0,0.0,0.0]
+        self.angular_velocity=[0.0,0.0,0.0]
+        
+        self.battery=100.0
+        self.maxload=100.0
+        self.currentload=0.0
+
+    def __str__(self):
+       return(f'''[position:{self.position}\n
+orientation:{self.orientation}\n
+linear_velocity:{self.linear_velocity}\n
+angular_velocity:{self.angular_velocity}\n
+battery:{self.battery}]\n''') 
+                  
+
+class Vehicle:
+    
+    def __init__(self,drone_name="Drone0"):
+        self.drone_name=drone_name
+        self._client = airsim.MultirotorClient()
+
+        #无人机属性
+        position=self._client.getMultirotorState(vehicle_name=self.drone_name).kinematics_estimated.position
+        orientation=self._client.getMultirotorState(vehicle_name=self.drone_name).kinematics_estimated.orientation
+        linear_velocity=self._client.getMultirotorState(vehicle_name=self.drone_name).kinematics_estimated.linear_velocity
+        angular_velocity=self._client.getMultirotorState(vehicle_name=self.drone_name).kinematics_estimated.angular_velocity
+        
+        # 无人机状态
+        self.state=State()
+        self.state.position=[position.x_val,position.y_val,position.z_val]
+        self.state.orientation=[orientation.w_val,orientation.x_val,orientation.y_val,orientation.z_val]
+        self.state.linear_velocity=[linear_velocity.x_val,linear_velocity.y_val,linear_velocity.z_val]
+        self.state.angular_velocity=[angular_velocity.x_val,angular_velocity.y_val,angular_velocity.z_val]
+    
+    #更新状态
+    def updateState(self):
+        s=self._client.getMultirotorState(vehicle_name=self.drone_name).kinematics_estimated
+        
+        position=s.position
+        orientation=s.orientation
+        linear_velocity=s.linear_velocity
+        angular_velocity=s.angular_velocity
+        
+        self.state.position=[position.x_val,position.y_val,position.z_val]
+        self.state.orientation=[orientation.w_val,orientation.x_val,orientation.y_val,orientation.z_val]
+        self.state.linear_velocity=[linear_velocity.x_val,linear_velocity.y_val,linear_velocity.z_val]
+        self.state.angular_velocity=[angular_velocity.x_val,angular_velocity.y_val,angular_velocity.z_val]
+    
+    
+#..................................................................
+#..................................................................
+
+
+class Task:
+    def __init__(self):
+        self.type = ""
+        self.duration = 0
+        self.workload = 0  # 0-100
+        self.priority = 0
+        
+    # 定义比较方法，实现先按priority排序，再按workload排序
+    def __lt__(self, other):
+        # 先比较priority，如果不同则返回结果
+        if self.priority != other.priority:
+            return self.priority > other.priority
+        # 如果priority相同，则比较workload
+        return self.workload < other.workload
+
+
+class Taskqueue:
+    def __init__(self):
+        self.tasks = []
+        self.task_num = 0
+        
+    def generate_tasks(self, num=1):
+        for _ in range(num):
+            task = Task()
+            task.type = "move"
+            task.duration = random.randint(1, 5)
+            task.workload = random.randint(1, 20)
+            task.priority = random.randint(1, 5)  # 1-5的优先级，1为最低
+            self.tasks.append(task)
+        self.task_num += num
+        # 生成任务后自动排序
+        self._sort_tasks()
+    
+    def add_task(self, task):
+        """添加单个任务并自动排序"""
+        self.tasks.append(task)
+        self.task_num += 1
+        self._sort_tasks()
+        
+    def _sort_tasks(self):
+        """内部方法：按照priority和workload排序任务队列"""
+        self.tasks.sort()
+    
+    def pop_task(self):
+        if self.task_num > 0:
+            # 由于列表已经排序，直接取出第一个元素就是优先级最高且工作量最小的任务
+            task = self.tasks.pop(0)
+            self.task_num -= 1
+            return task
+        else:
+            return None
+    
+    def get_task(self):
+        return self.tasks[0]
+    
+    def __str__(self):
+        return f"任务队列中剩余{self.task_num}个任务"
+
+
+#任务处理中心
+class Center:
+    def __init__(self,tasks=None):
+        if tasks is None:
+            self.taskqueue=Taskqueue()
+        else:
+            self.taskqueue=tasks
+    
+    #分配任务
+    def assign_task(self,vehicles):
+        if self.taskqueue.task_num>0:
+            task=self.taskqueue.get_task()
+            results={}
+            for vehicle in vehicles:
+                if vehicle.state.battery>=task.workload and (vehicle.state.maxload-vehicle.state.current_load)>=task.workload:
+                    results[vehicle]=task
+                    vehicle.state.battery-=task.workload
+                    vehicle.state.current_load+=task.workload
+                    break
+            return results
+        else:
+            return None
+    
+
+
+
+
+
+
+#.............................................
+
+
+
+
+# 添加多无人机可视化器类
+class MultiDroneVisualizer:
+    def __init__(self, vehicles):
+        """初始化多无人机可视化器
+        Args:
+            vehicles: 无人机对象列表或字典
+        """
+        # 确保vehicles是字典格式 {drone_name: Vehicle对象}
+        if isinstance(vehicles, list):
+            self.vehicles = {vehicle.drone_name: vehicle for vehicle in vehicles}
+        else:
+            self.vehicles = vehicles
+            
+        self.root = None
+        self.fig = None
+        self.canvas = None
+        self.ani = None
+        self.running = False
+        self.data_lock = threading.Lock()  # 用于保护共享数据
+        self.interval_lock = threading.Lock()  # 用于保护更新间隔
+        self.current_interval = 500  # 默认更新间隔（毫秒）
+        
+        # 为每架无人机创建独立的数据存储结构
+        self.drone_data = {}
+        for drone_name in self.vehicles:
+            self.drone_data[drone_name] = {
+                'positions': [],  # 存储 [x, y, z] 坐标
+                'battery_levels': [],
+                'velocities': [],  # 存储 [vx, vy, vz] 线速度
+                'times': [],
+                'color': self._get_distinct_color(len(self.drone_data))  # 为每架无人机分配不同颜色
+            }
+        
+        self.start_time = time.time()
+        self.max_points = 500
+    
+    def _get_distinct_color(self, index):
+        """为不同无人机生成不同的颜色"""
+        colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+        return colors[index % len(colors)]
+    
+    def start(self):
+        """启动多无人机可视化窗口"""
+        # 确保在主线程中创建Tk窗口
+        if threading.current_thread() != threading.main_thread():
+            print("警告：可视化应该在主线程中启动以避免Tcl错误")
+        
+        self.root = tk.Tk()
+        self.root.title("多无人机状态可视化")
+        
+        # 创建控制面板
+        self._create_control_panel()
+        
+        # 创建图形
+        self._create_figure()
+        
+        # 关闭事件
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        self.running = True
+        
+        # 启动数据更新线程
+        self.update_thread = threading.Thread(target=self._update_data_loop)
+        self.update_thread.daemon = True
+        self.update_thread.start()
+        
+        # 启动主事件循环
+        try:
+            self.root.mainloop()
+        except Exception as e:
+            print(f"可视化窗口运行出错: {e}")
+        finally:
+            self.running = False
+            self._cleanup()
+    
+    def _cleanup(self):
+        """清理所有资源"""
+        try:
+            if self.ani:
+                self.ani.event_source.stop()
+                self.ani = None
+            if self.canvas:
+                self.canvas.get_tk_widget().destroy()
+                self.canvas = None
+            if self.fig:
+                plt.close(self.fig)
+                self.fig = None
+            if self.root:
+                # 确保root窗口已经销毁
+                if self.root.winfo_exists():
+                    self.root.destroy()
+        except Exception as e:
+            print(f"清理资源时出错: {e}")
+    
+    def _create_control_panel(self):
+        """创建控制界面"""
+        control_frame = tk.Frame(self.root)
+        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 刷新间隔控制
+        tk.Label(control_frame, text="刷新间隔(ms):").pack(side=tk.LEFT, padx=5)
+        self.interval_var = tk.IntVar(value=500)
+        interval_entry = tk.Entry(control_frame, textvariable=self.interval_var, width=5)
+        interval_entry.pack(side=tk.LEFT, padx=5)
+        
+        # 应用按钮
+        apply_btn = tk.Button(control_frame, text="应用", command=self.apply_settings)
+        apply_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 清除数据按钮
+        clear_btn = tk.Button(control_frame, text="清除数据", command=self.clear_data)
+        clear_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 退出按钮
+        exit_btn = tk.Button(control_frame, text="退出", command=self.on_closing)
+        exit_btn.pack(side=tk.RIGHT, padx=5)
+    
+    def _create_figure(self):
+        """创建matplotlib图形 - 优化布局以显示多无人机数据"""
+        # 3行2列布局，包含更多图表类型
+        self.fig, ((self.ax_position_xy, self.ax_position_xz),
+                  (self.ax_battery, self.ax_velocity)) = plt.subplots(2, 2, figsize=(12, 10))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # 设置图形
+        self.setup_plots()
+        
+        # 动画 - 设置save_count避免缓存警告
+        self.ani = FuncAnimation(self.fig, self.update_plot, interval=500,
+                                 cache_frame_data=False, save_count=100)
+    
+    def apply_settings(self):
+        """应用用户设置的刷新间隔"""
+        try:
+            interval = max(100, self.interval_var.get())
+            self.ani.event_source.interval = interval
+            # 同时更新线程安全的间隔值
+            with self.interval_lock:
+                self.current_interval = interval
+        except Exception as e:
+            print(f"应用设置时出错: {e}")
+            self.interval_var.set(500)
+            with self.interval_lock:
+                self.current_interval = 500
+    
+    def clear_data(self):
+        """清除所有历史数据"""
+        with self.data_lock:
+            self.start_time = time.time()
+            for drone_name in self.drone_data:
+                self.drone_data[drone_name]['positions'] = []
+                self.drone_data[drone_name]['battery_levels'] = []
+                self.drone_data[drone_name]['velocities'] = []
+                self.drone_data[drone_name]['times'] = []
+        # 使用after方法在主线程中更新图表
+        if self.root:
+            self.root.after(0, lambda: self.update_plot(0))
+    
+    def _update_data_loop(self):
+        """在后台线程中更新所有无人机数据"""
+        while self.running:
+            try:
+                # 安全地获取更新间隔
+                interval = 500  # 默认值
+                with self.interval_lock:
+                    interval = self.current_interval
+                interval = max(100, interval) / 1000  # 转换为秒
+                
+                current_time = time.time() - self.start_time
+                
+                # 安全地更新所有无人机数据
+                with self.data_lock:
+                    for drone_name, vehicle in self.vehicles.items():
+                        # 更新无人机状态
+                        try:
+                            vehicle.updateState()
+                            # 更新数据
+                            self.drone_data[drone_name]['times'].append(current_time)
+                            self.drone_data[drone_name]['positions'].append(vehicle.state.position.copy())
+                            self.drone_data[drone_name]['battery_levels'].append(vehicle.state.battery)
+                            self.drone_data[drone_name]['velocities'].append(vehicle.state.linear_velocity.copy())
+                            
+                            # 限制数据点数量
+                            data = self.drone_data[drone_name]
+                            if len(data['times']) > self.max_points:
+                                data['times'] = data['times'][-self.max_points:]
+                                data['positions'] = data['positions'][-self.max_points:]
+                                data['battery_levels'] = data['battery_levels'][-self.max_points:]
+                                data['velocities'] = data['velocities'][-self.max_points:]
+                        except Exception as e:
+                            print(f"更新无人机{drone_name}数据时出错: {e}")
+                
+                # 等待下一次更新
+                time.sleep(interval)
+            except Exception as e:
+                if self.running:  # 只有在仍然运行时打印错误
+                    print(f"更新数据时出错: {e}")
+                time.sleep(0.5)  # 出错时暂停0.5秒再尝试
+    
+    def setup_plots(self):
+        """设置所有图表的属性"""
+        # XY平面位置图
+        self.ax_position_xy.set_title("无人机位置变化 (X-Y平面)")
+        self.ax_position_xy.set_xlabel("X 坐标 (米)")
+        self.ax_position_xy.set_ylabel("Y 坐标 (米)")
+        self.ax_position_xy.grid(True, linestyle='--', alpha=0.7)
+        self.ax_position_xy.set_aspect('equal')
+        
+        # XZ平面位置图
+        self.ax_position_xz.set_title("无人机位置变化 (X-Z平面)")
+        self.ax_position_xz.set_xlabel("X 坐标 (米)")
+        self.ax_position_xz.set_ylabel("Z 坐标 (米)")
+        self.ax_position_xz.grid(True, linestyle='--', alpha=0.7)
+        self.ax_position_xz.set_aspect('equal')
+        
+        # 电池电量图
+        self.ax_battery.set_title("电池电量变化")
+        self.ax_battery.set_xlabel("时间 (秒)")
+        self.ax_battery.set_ylabel("电量 (%)")
+        self.ax_battery.set_ylim(0, 105)
+        self.ax_battery.grid(True, linestyle='--', alpha=0.7)
+        
+        # 线速度图
+        self.ax_velocity.set_title("线速度变化")
+        self.ax_velocity.set_xlabel("时间 (秒)")
+        self.ax_velocity.set_ylabel("速度 (米/秒)")
+        self.ax_velocity.grid(True, linestyle='--', alpha=0.7)
+        
+        self.fig.tight_layout()
+    
+    def update_plot(self, frame):
+        """更新图表显示，此方法在主线程中调用"""
+        try:
+            # 安全地获取数据副本
+            with self.data_lock:
+                drone_data_copy = {}
+                for drone_name, data in self.drone_data.items():
+                    drone_data_copy[drone_name] = {
+                        'times': data['times'].copy(),
+                        'positions': data['positions'].copy(),
+                        'battery_levels': data['battery_levels'].copy(),
+                        'velocities': data['velocities'].copy(),
+                        'color': data['color']
+                    }
+            
+            # 清除所有图表
+            self.ax_position_xy.clear()
+            self.ax_position_xz.clear()
+            self.ax_battery.clear()
+            self.ax_velocity.clear()
+            self.setup_plots()
+            
+            # 图例句柄
+            legend_handles = []
+            
+            # 找出所有无人机的最新时间，用于设置统一的X轴范围
+            all_times = []
+            for drone_name, data in drone_data_copy.items():
+                all_times.extend(data['times'])
+            
+            # 绘制每架无人机的数据
+            for drone_name, data in drone_data_copy.items():
+                color = data['color']
+                positions = data['positions']
+                times = data['times']
+                battery_levels = data['battery_levels']
+                velocities = data['velocities']
+                
+                # 添加图例
+                handle = self.ax_position_xy.plot([], [], color=color, label=drone_name)[0]
+                legend_handles.append(handle)
+                
+                # 更新位置图
+                if len(positions) > 1:
+                    pos_array = np.array(positions)
+                    
+                    # XY平面轨迹
+                    self.ax_position_xy.plot(pos_array[:, 0], pos_array[:, 1], color=color, alpha=0.6, linewidth=1)
+                    self.ax_position_xy.plot(pos_array[:, 0], pos_array[:, 1], color=color, marker='o', alpha=0.3, markersize=3)
+                    self.ax_position_xy.plot(pos_array[-1, 0], pos_array[-1, 1], color=color, marker='x', markersize=10)
+                    self.ax_position_xy.annotate(f"{drone_name}: X={pos_array[-1, 0]:.2f}, Y={pos_array[-1, 1]:.2f}",
+                                              xy=(pos_array[-1, 0], pos_array[-1, 1]),
+                                              xytext=(10, 10),
+                                              textcoords='offset points',
+                                              bbox=dict(boxstyle='round,pad=0.5', fc='white', alpha=0.7),
+                                              arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2'))
+                    
+                    # XZ平面轨迹
+                    self.ax_position_xz.plot(pos_array[:, 0], pos_array[:, 2], color=color, alpha=0.6, linewidth=1)
+                    self.ax_position_xz.plot(pos_array[:, 0], pos_array[:, 2], color=color, marker='o', alpha=0.3, markersize=3)
+                    self.ax_position_xz.plot(pos_array[-1, 0], pos_array[-1, 2], color=color, marker='x', markersize=10)
+                    
+                # 更新电池图
+                if times and battery_levels:
+                    self.ax_battery.plot(times, battery_levels, color=color, linewidth=2)
+                    
+                    # 标记最新电池电量
+                    current_battery = battery_levels[-1]
+                    self.ax_battery.annotate(f"{drone_name}: {current_battery:.1f}%",
+                                          xy=(times[-1], current_battery),
+                                          xytext=(0, 10),
+                                          textcoords='offset points',
+                                          bbox=dict(boxstyle='round,pad=0.5', fc='white', alpha=0.7),
+                                          arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=.2'))
+                
+                # 更新线速度图
+                if len(velocities) > 1 and times:
+                    vel_array = np.array(velocities)
+                    # 绘制X、Y、Z三个方向的速度
+                    self.ax_velocity.plot(times, vel_array[:, 0], color=color, linestyle='-', alpha=0.7, linewidth=1.5, label=f'{drone_name} Vx')
+                    self.ax_velocity.plot(times, vel_array[:, 1], color=color, linestyle='--', alpha=0.7, linewidth=1.5, label=f'{drone_name} Vy')
+                    self.ax_velocity.plot(times, vel_array[:, 2], color=color, linestyle=':', alpha=0.7, linewidth=1.5, label=f'{drone_name} Vz')
+            
+            # 添加警戒线
+            self.ax_battery.axhline(y=20, color='r', linestyle='--', alpha=0.5)
+            self.ax_battery.axhline(y=50, color='y', linestyle='--', alpha=0.5)
+            
+            # 添加图例
+            self.ax_position_xy.legend(handles=legend_handles, loc='upper right')
+            self.ax_velocity.legend(loc='upper right')
+            
+            # 调整X轴范围，保持动态视图
+            if all_times:
+                max_time = max(all_times)
+                time_range = max(0, max_time - 30)
+                self.ax_battery.set_xlim(time_range, max_time + 5)
+                self.ax_velocity.set_xlim(time_range, max_time + 5)
+            
+            # 确保图形布局正确
+            self.fig.tight_layout()
+            
+        except Exception as e:
+            print(f"更新图形出错: {e}")
+        
+        # 由于我们使用单独的线程更新数据，这里返回None即可
+        return None
+    
+    def on_closing(self):
+        """关闭窗口的处理函数"""
+        try:
+            self.running = False
+            # 确保Tkinter操作在正确的线程中
+            if self.root and self.root.winfo_exists():
+                self.root.quit()
+                self.root.destroy()
+            self._cleanup()
+        except Exception as e:
+            print(f"关闭可视化窗口时出错: {e}")
+
+# 添加全局多无人机可视化控制变量
+_multi_visualizer = None
+_multi_visualizer_thread = None
+
+# 启动多无人机可视化
+def start_multi_drone_visualization(vehicles):
+    global _multi_visualizer, _multi_visualizer_thread
+    
+    # 关闭已经存在的多无人机可视化窗口
+    if _multi_visualizer:
+        stop_multi_drone_visualization()
+        time.sleep(0.5)
+    
+    # 创建多无人机可视化器实例
+    _multi_visualizer = MultiDroneVisualizer(vehicles)
+    
+    # 在单独线程中启动可视化
+    _multi_visualizer_thread = threading.Thread(target=_multi_visualizer.start)
+    _multi_visualizer_thread.daemon = True
+    _multi_visualizer_thread.start()
+    
+    return _multi_visualizer_thread
+
+# 停止多无人机可视化
+def stop_multi_drone_visualization():
+    global _multi_visualizer, _multi_visualizer_thread
+    
+    if _multi_visualizer:
+        try:
+            # 设置停止标志，让可视化线程自行关闭
+            _multi_visualizer.running = False
+            
+            # 不要直接调用on_closing()，让线程自己处理
+            # 等待一小段时间确保窗口正确关闭
+            if _multi_visualizer_thread and _multi_visualizer_thread.is_alive():
+                _multi_visualizer_thread.join(timeout=2.0)  # 等待最多2秒
+        except Exception as e:
+            print(f"关闭可视化窗口时出错: {e}")
+        finally:
+            _multi_visualizer = None
+            _multi_visualizer_thread = None
+
+
