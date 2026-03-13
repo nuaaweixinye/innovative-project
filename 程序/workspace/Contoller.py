@@ -90,7 +90,7 @@ class Controller:
     # 分配计算任务给无人机
     def assign_task_to_drone(self, task, drone_id=None):
         if drone_id is None:  # 如果没有指定无人机id，则执行分配策略
-            print("按照任务分配策略分配")
+            print("分配策略未实现")
         else:  # 如果指定了无人机id，则只分配给指定的无人机
             for drone in self.drones:
                 if drone.id == drone_id:
@@ -131,3 +131,17 @@ class Controller:
         self.tasks.add_task(task)
         print(f"创建复杂任务: {task_list}")
         return task
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    

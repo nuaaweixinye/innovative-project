@@ -4,6 +4,231 @@ import config
 from Drone import Drone
 from Contoller import Controller
 import ast
+import threading
+import sys
+import time
+import airsim
+
+# 单独的实时控制窗口
+class RealTimeControlWindow:
+    def __init__(self, master, drone_controller):
+        self.master = master
+        self.drone_controller = drone_controller
+        self.window = tk.Toplevel(master)
+        self.window.title("实时控制")
+        self.window.geometry("400x300")
+        
+        # 速度输入框
+        speed_frame = ttk.Frame(self.window)
+        speed_frame.pack(pady=10)
+        
+        tk.Label(speed_frame, text="速度:").pack(side=tk.LEFT)
+        self.speed_entry = tk.Entry(speed_frame, width=10)
+        self.speed_entry.insert(0, "5.0")
+        self.speed_entry.pack(side=tk.LEFT, padx=5)
+        
+        set_speed_btn = tk.Button(speed_frame, text="设置速度", command=self.set_speed, bg="#2196F3", fg="white")
+        set_speed_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 控制说明
+        control_info = tk.Text(self.window, height=8, width=50)
+        control_info.pack(pady=10)
+        control_info.insert(tk.END, "控制说明：\n")
+        control_info.insert(tk.END, "W/S: 前进/后退\n")
+        control_info.insert(tk.END, "A/D: 左移/右移\n")
+        control_info.insert(tk.END, "↑/↓: 上升/下降\n")
+        control_info.insert(tk.END, "←/→: 左转/右转\n")
+        control_info.config(state=tk.DISABLED)
+        
+        # 无人机选择
+        drone_frame = ttk.Frame(self.window)
+        drone_frame.pack(pady=10)
+        
+        tk.Label(drone_frame, text="选择无人机:").pack(side=tk.LEFT)
+        self.selected_drone = tk.StringVar(value="Drone1")
+        drone_options = [f"Drone{i+1}" for i in range(config.DRONE_NUM)]
+        drone_menu = tk.OptionMenu(drone_frame, self.selected_drone, *drone_options)
+        drone_menu.pack(side=tk.LEFT, padx=5)
+        
+        # 起飞和降落按钮
+        flight_frame = ttk.Frame(self.window)
+        flight_frame.pack(pady=10)
+        
+        takeoff_btn = tk.Button(flight_frame, text="起飞", command=self.takeoff, bg="#4CAF50", fg="white")
+        takeoff_btn.pack(side=tk.LEFT, padx=5)
+        
+        land_btn = tk.Button(flight_frame, text="降落", command=self.land, bg="#f44336", fg="white")
+        land_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 退出控制按钮
+        quit_btn = tk.Button(self.window, text="退出控制", command=self.quit_control, bg="#f44336", fg="white")
+        quit_btn.pack(pady=10)
+        
+        # 绑定键盘事件
+        self.window.focus_set()
+        self.window.bind("<KeyPress>", self.on_key_press)
+        self.window.bind("<KeyRelease>", self.on_key_release)
+        
+        # 控制状态
+        self.keys_pressed = set()
+        self.control_active = True
+        
+        # 启动控制循环
+        self.control_loop()
+    
+    def set_speed(self):
+        try:
+            speed = float(self.speed_entry.get())
+            self.drone_controller.set_speed(speed)
+        except ValueError:
+            print("错误: 请输入有效的速度值")
+    
+    def takeoff(self):
+        drone_id = int(self.selected_drone.get().replace("Drone", ""))
+        self.drone_controller.takeoff(drone_id)
+    
+    def land(self):
+        drone_id = int(self.selected_drone.get().replace("Drone", ""))
+        self.drone_controller.land(drone_id)
+    
+    def on_key_press(self, event):
+        key = event.keysym.lower()
+        self.keys_pressed.add(key)
+    
+    def on_key_release(self, event):
+        key = event.keysym.lower()
+        if key in self.keys_pressed:
+            self.keys_pressed.remove(key)
+    
+    def control_loop(self):
+        if not self.control_active:
+            return
+            
+        # 更新无人机ID
+        drone_id = int(self.selected_drone.get().replace("Drone", ""))
+        self.drone_controller.update_drone_id(drone_id)
+        
+        # 处理按键
+        if 'w' in self.keys_pressed:
+            self.drone_controller.move_forward()
+        elif 's' in self.keys_pressed:
+            self.drone_controller.move_backward()
+        
+        if 'a' in self.keys_pressed:
+            self.drone_controller.move_left()
+        elif 'd' in self.keys_pressed:
+            self.drone_controller.move_right()
+        
+        if 'up' in self.keys_pressed:
+            self.drone_controller.move_up()
+        elif 'down' in self.keys_pressed:
+            self.drone_controller.move_down()
+        
+        if 'left' in self.keys_pressed:
+            self.drone_controller.rotate_left()
+        elif 'right' in self.keys_pressed:
+            self.drone_controller.rotate_right()
+        
+        # 每隔一段时间检查一次
+        if self.control_active:
+            self.window.after(100, self.control_loop)
+    
+    def quit_control(self):
+        self.control_active = False
+        self.window.destroy()
+        print("退出实时控制")
+
+class SingleDroneController:
+    def __init__(self, drone_id=1):
+        self.client = airsim.MultirotorClient()
+        self.client.confirmConnection()
+        self.update_drone_id(drone_id)
+        self.speed = 5.0  # 默认速度
+        print(f"单无人机控制器已初始化，无人机: {self.vehicle_name}")
+        
+        # 启用API控制并解锁
+        self.client.enableApiControl(True, vehicle_name=self.vehicle_name)
+        self.client.armDisarm(True, vehicle_name=self.vehicle_name)
+    
+    def update_drone_id(self, drone_id):
+        """更新无人机ID"""
+        self.vehicle_name = f"Drone{drone_id}"
+        # 为新无人机启用API控制
+        self.client.enableApiControl(True, vehicle_name=self.vehicle_name)
+        self.client.armDisarm(True, vehicle_name=self.vehicle_name)
+    
+    def set_speed(self, speed):
+        """设置控制速度"""
+        self.speed = speed
+        print(f"速度已设置为: {speed}")
+    
+    def takeoff(self, drone_id=None):
+        """起飞无人机"""
+        if drone_id:
+            vehicle_name = f"Drone{drone_id}"
+        else:
+            vehicle_name = self.vehicle_name
+        
+        print(f"{vehicle_name} 起飞...")
+        self.client.takeoffAsync(vehicle_name=vehicle_name)
+    
+    def land(self, drone_id=None):
+        """降落无人机"""
+        if drone_id:
+            vehicle_name = f"Drone{drone_id}"
+        else:
+            vehicle_name = self.vehicle_name
+        
+        print(f"{vehicle_name} 降落...")
+        self.client.landAsync(vehicle_name=vehicle_name)
+    
+    def move_forward(self):
+        """向前移动"""
+        print("向前移动")
+        self.client.moveByVelocityBodyFrameAsync(self.speed, 0, 0, 0.1, vehicle_name=self.vehicle_name)
+    
+    def move_backward(self):
+        """向后移动"""
+        print("向后移动")
+        self.client.moveByVelocityBodyFrameAsync(-self.speed, 0, 0, 0.1, vehicle_name=self.vehicle_name)
+    
+    def move_left(self):
+        """向左移动"""
+        print("向左移动")
+        self.client.moveByVelocityBodyFrameAsync(0, -self.speed, 0, 0.1, vehicle_name=self.vehicle_name)
+    
+    def move_right(self):
+        """向右移动"""
+        print("向右移动")
+        self.client.moveByVelocityBodyFrameAsync(0, self.speed, 0, 0.1, vehicle_name=self.vehicle_name)
+    
+    def move_up(self):
+        """向上移动"""
+        print("向上移动")
+        # AirSim中Z轴向下为正，所以要传入负值才能上升
+        self.client.moveByVelocityBodyFrameAsync(0, 0, -abs(self.speed), 0.1, vehicle_name=self.vehicle_name)
+    
+    def move_down(self):
+        """向下移动"""
+        print("向下移动")
+        # AirSim中Z轴向下为正，所以要传入正值才能下降
+        self.client.moveByVelocityBodyFrameAsync(0, 0, abs(self.speed), 0.1, vehicle_name=self.vehicle_name)
+    
+    def rotate_left(self):
+        """向左旋转"""
+        print("向左旋转")
+        # 获取当前朝向并旋转
+        yaw_rate = 30  # 度/秒
+        duration = 0.5  # 秒
+        self.client.rotateByYawRateAsync(yaw_rate, duration, vehicle_name=self.vehicle_name)
+    
+    def rotate_right(self):
+        """向右旋转"""
+        print("向右旋转")
+        # 获取当前朝向并旋转
+        yaw_rate = -30  # 度/秒
+        duration = 0.5  # 秒
+        self.client.rotateByYawRateAsync(yaw_rate, duration, vehicle_name=self.vehicle_name)
 
 class DroneControlGUI:
     def __init__(self, root):
@@ -13,6 +238,7 @@ class DroneControlGUI:
         
         # 创建控制器实例
         self.controller = Controller()
+        self.single_drone_controller = SingleDroneController()
         
         # 创建主标签页控件
         self.notebook = ttk.Notebook(root)
@@ -27,6 +253,11 @@ class DroneControlGUI:
         self.control_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.control_frame, text="无人机控制")
         self.create_control_page()
+        
+        # 创建实时控制页面
+        self.realtime_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.realtime_frame, text="实时控制")
+        self.create_realtime_control_page()
     
     def create_task_page(self):
         # 任务类型选择
@@ -94,20 +325,20 @@ class DroneControlGUI:
                 time = int(self.time_entry.get())
                 
                 if cost >= 100:
-                    messagebox.showerror("错误", "Cost必须小于100")
+                    print("错误: Cost必须小于100")
                     return
                     
                 # 调用Controller接口生成简单任务
                 task = self.controller.create_simple_task(cost, time)
-                messagebox.showinfo("成功", f"简单任务已生成: Cost={cost}, Time={time}")
+                print(f"简单任务已生成: Cost={cost}, Time={time}")
                 
             except ValueError:
-                messagebox.showerror("错误", "请输入有效的数字")
+                print("错误: 请输入有效的数字")
         else:
             # 获取复杂任务输入
             task_list_str = self.task_list_text.get("1.0", tk.END).strip()
             if not task_list_str:
-                messagebox.showerror("错误", "请输入任务列表")
+                print("错误: 请输入任务列表")
                 return
                 
             try:
@@ -128,16 +359,16 @@ class DroneControlGUI:
                 
                 # 调用Controller接口生成复杂任务
                 task = self.controller.create_complex_task(task_list)
-                messagebox.showinfo("成功", f"复杂任务已生成: {task_list}")
+                print(f"复杂任务已生成: {task_list}")
                 
             except (ValueError, SyntaxError):
-                messagebox.showerror("错误", "无效的任务列表格式")
+                print("错误: 无效的任务列表格式")
     
     def assign_task(self):
         # 获取所有任务并显示供选择
         task_names = [f"Task_{i}" for i in range(len(self.controller.tasks.tasks))]  # 获取任务列表
         if not task_names:
-            messagebox.showwarning("警告", "没有可分配的任务")
+            print("警告: 没有可分配的任务")
             return
         
         # 创建分配窗口
@@ -171,10 +402,10 @@ class DroneControlGUI:
                 
                 # 调用Controller接口分配任务
                 self.controller.assign_task_to_drone(task, drone_id)
-                messagebox.showinfo("成功", f"任务已分配给{selected_drone}")
+                print(f"任务已分配给{selected_drone}")
                 assign_window.destroy()
             else:
-                messagebox.showerror("错误", "请选择有效任务")
+                print("错误: 请选择有效任务")
         
         tk.Button(assign_window, text="确认分配", command=confirm_assignment, bg="#4CAF50", fg="white").pack(pady=10)
     
@@ -282,11 +513,9 @@ class DroneControlGUI:
                     print(f"移动所有无人机到位置: {position}")
                 else:
                     print(f"移动无人机{drone_id}到位置: {position}")
-                    
-                messagebox.showinfo("移动指令", f"已发送移动指令到{'所有无人机' if drone_id is None else f'无人机{drone_id}'}")
                 
             except ValueError:
-                messagebox.showerror("错误", "请输入有效的坐标值")
+                print("错误: 请输入有效的坐标值")
         else:
             # 获取速度和持续时间
             try:
@@ -305,13 +534,40 @@ class DroneControlGUI:
                     print(f"以速度{velocity}移动所有无人机{duration}秒")
                 else:
                     print(f"以速度{velocity}移动无人机{drone_id}{duration}秒")
-                    
-                messagebox.showinfo("移动指令", f"已发送速度移动指令到{'所有无人机' if drone_id is None else f'无人机{drone_id}'}")
                 
             except ValueError:
-                messagebox.showerror("错误", "请输入有效的数值")
+                print("错误: 请输入有效的数值")
+    
+    def create_realtime_control_page(self):
+        # 实时控制说明
+        info_label = tk.Label(self.realtime_frame, text="点击下方按钮开启实时控制模式", font=("Arial", 12))
+        info_label.pack(pady=20)
+        
+        # 开始实时控制按钮
+        start_btn = tk.Button(self.realtime_frame, text="开始实时控制", 
+                             command=self.start_realtime_control, 
+                             bg="#9C27B0", fg="white", font=("Arial", 12))
+        start_btn.pack(pady=10)
+        
+        # 控制说明
+        control_desc = tk.Text(self.realtime_frame, height=10, width=60)
+        control_desc.pack(pady=10)
+        control_desc.insert(tk.END, "控制说明：\n")
+        control_desc.insert(tk.END, "W/S: 前进/后退\n")
+        control_desc.insert(tk.END, "A/D: 左移/右移\n")
+        control_desc.insert(tk.END, "↑/↓: 上升/下降\n")
+        control_desc.insert(tk.END, "←/→: 左转/右转\n")
+        control_desc.insert(tk.END, "起飞前请先点击起飞按钮\n")
+        control_desc.config(state=tk.DISABLED)
+    
+    def start_realtime_control(self):
+        # 创建实时控制窗口
+        RealTimeControlWindow(self.root, self.single_drone_controller)
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = DroneControlGUI(root)
     root.mainloop()
+    
+    
+    
