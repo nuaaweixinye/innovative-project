@@ -249,6 +249,11 @@ class DroneControlGUI:
         self.notebook.add(self.task_frame, text="任务生成")
         self.create_task_page()
         
+        # 创建任务与资源显示页面
+        self.display_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.display_frame, text="任务与资源显示")
+        self.create_display_page()
+        
         # 创建无人机控制页面
         self.control_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.control_frame, text="无人机控制")
@@ -304,9 +309,127 @@ class DroneControlGUI:
         assign_btn = tk.Button(button_frame, text="分配任务", command=self.assign_task, bg="#FF9800", fg="white")
         assign_btn.pack(side=tk.LEFT, padx=5)
         
+        # 执行任务按钮
+        execute_btn = tk.Button(button_frame, text="执行任务", command=self.execute_drone_tasks, bg="#2196F3", fg="white")
+        execute_btn.pack(side=tk.LEFT, padx=5)
+        
+        
         # 默认显示简单任务输入
         self.complex_frame.pack_forget()
         
+    def create_display_page(self):
+        # 更新按钮
+        update_frame = ttk.Frame(self.display_frame)
+        update_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        update_btn = tk.Button(update_frame, text="更新", command=self.update_display, bg="#2196F3", fg="white")
+        update_btn.pack(side=tk.LEFT)
+        
+        # 自动刷新选项
+        refresh_frame = ttk.Frame(self.display_frame)
+        refresh_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.auto_refresh_var = tk.BooleanVar(value=False)
+        auto_refresh_check = tk.Checkbutton(refresh_frame, text="自动刷新", variable=self.auto_refresh_var, command=self.toggle_auto_refresh)
+        auto_refresh_check.pack(side=tk.LEFT)
+        
+        self.refresh_interval = tk.IntVar(value=1000)  # 默认1秒刷新一次
+        tk.Label(refresh_frame, text="刷新间隔(ms):").pack(side=tk.LEFT, padx=(10, 5))
+        interval_spinbox = tk.Spinbox(refresh_frame, from_=100, to=5000, increment=100, textvariable=self.refresh_interval, width=8)
+        interval_spinbox.pack(side=tk.LEFT)
+        
+        # 显示选项
+        options_frame = ttk.Frame(self.display_frame)
+        options_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.show_tasks_var = tk.BooleanVar(value=True)
+        self.show_resources_var = tk.BooleanVar(value=True)
+        
+        tk.Checkbutton(options_frame, text="显示未分配任务", variable=self.show_tasks_var).pack(side=tk.LEFT, padx=5)
+        tk.Checkbutton(options_frame, text="显示资源状态", variable=self.show_resources_var).pack(side=tk.LEFT, padx=5)
+        
+        # 任务显示区域
+        self.tasks_display_frame = ttk.LabelFrame(self.display_frame, text="未分配任务", padding=(10, 5))
+        self.tasks_display_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.tasks_text = tk.Text(self.tasks_display_frame, height=10, width=70)
+        self.tasks_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # 资源显示区域
+        self.resources_display_frame = ttk.LabelFrame(self.display_frame, text="无人机资源状态", padding=(10, 5))
+        self.resources_display_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.resources_text = tk.Text(self.resources_display_frame, height=10, width=70)
+        self.resources_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # 初始更新显示
+        self.update_display()
+        
+        # 自动刷新定时器
+        self.auto_refresh_timer = None
+    
+    def toggle_auto_refresh(self):
+        if self.auto_refresh_var.get():
+            self.start_auto_refresh()
+        else:
+            self.stop_auto_refresh()
+    
+    def start_auto_refresh(self):
+        if self.auto_refresh_timer is not None:
+            self.root.after_cancel(self.auto_refresh_timer)
+        
+        def refresh():
+            self.update_display()
+            if self.auto_refresh_var.get():
+                self.auto_refresh_timer = self.root.after(self.refresh_interval.get(), refresh)
+        
+        self.auto_refresh_timer = self.root.after(self.refresh_interval.get(), refresh)
+    
+    def stop_auto_refresh(self):
+        if self.auto_refresh_timer is not None:
+            self.root.after_cancel(self.auto_refresh_timer)
+            self.auto_refresh_timer = None
+    
+    def update_display(self):
+        # 更新任务显示
+        if self.show_tasks_var.get():
+            self.tasks_display_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+            self.tasks_text.delete(1.0, tk.END)
+            
+            # 获取未分配的任务 - 使用Controller的tasks属性
+            unassigned_tasks = self.controller.tasks.tasks
+            if unassigned_tasks:
+                for i, task in enumerate(unassigned_tasks):
+                    if hasattr(task, 'cost') and hasattr(task, 'time'):
+                        # 简单任务
+                        self.tasks_text.insert(tk.END, f"任务 {i+1}: Cost={task.cost}, Time={task.time}\n")
+                    else:
+                        # 复杂任务
+                        self.tasks_text.insert(tk.END, f"任务 {i+1}: 复杂任务\n")
+            else:
+                self.tasks_text.insert(tk.END, "没有未分配的任务\n")
+        else:
+            self.tasks_display_frame.pack_forget()
+        
+        # 更新资源显示
+        if self.show_resources_var.get():
+            self.resources_display_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+            self.resources_text.delete(1.0, tk.END)
+            
+            # 显示每个无人机的资源状态 - 使用Drone的get_resources方法
+            for i, drone in enumerate(self.controller.drones):
+                total_resources = config.DRONE_MAX_RESOURCES
+                current_resources = drone.get_resources()
+                used_resources = total_resources - current_resources
+                
+                # 显示任务执行状态
+                has_tasks = drone.has_task()
+                task_status = "有任务" if has_tasks else "无任务"
+                
+                self.resources_text.insert(tk.END, f"无人机 {i+1}: 总资源={total_resources}, 已占用={used_resources}, 剩余={current_resources}, 状态={task_status}\n")
+        else:
+            self.resources_display_frame.pack_forget()
+    
     def toggle_task_fields(self):
         if self.task_type_var.get() == "simple":
             self.complex_frame.pack_forget()
@@ -402,12 +525,63 @@ class DroneControlGUI:
                 
                 # 调用Controller接口分配任务
                 self.controller.assign_task_to_drone(task, drone_id)
+                
+                # 从全局任务列表中移除已分配的任务
+                self.controller.tasks.tasks.pop(selected_task_index)
+                
                 print(f"任务已分配给{selected_drone}")
                 assign_window.destroy()
+                
+                # 更新显示
+                self.update_display()
             else:
                 print("错误: 请选择有效任务")
         
         tk.Button(assign_window, text="确认分配", command=confirm_assignment, bg="#4CAF50", fg="white").pack(pady=10)
+    
+    
+    def execute_drone_tasks(self):
+        """执行无人机上已分配的任务"""
+        # 询问用户要执行哪个无人机的任务
+        execute_window = tk.Toplevel(self.root)
+        execute_window.title("执行任务")
+        execute_window.geometry("300x150")
+        
+        # 无人机选择
+        tk.Label(execute_window, text="选择无人机:").pack(anchor=tk.W, padx=10, pady=5)
+        drone_var = tk.StringVar(value="所有无人机")
+        drone_options = ["所有无人机"] + [f"无人机{i+1}" for i in range(config.DRONE_NUM)]
+        drone_menu = tk.OptionMenu(execute_window, drone_var, *drone_options)
+        drone_menu.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 确认执行按钮
+        def confirm_execution():
+            selected_drone = drone_var.get()
+            
+            if selected_drone == "所有无人机":
+                # 执行所有无人机的任务
+                for drone in self.controller.drones:
+                    drone.excute_tasks()  # 执行该无人机的任务
+                    print(f"无人机{drone.id}已执行其任务")
+            else:
+                # 执行特定无人机的任务
+                drone_id = int(selected_drone.replace("无人机", ""))
+                if 1 <= drone_id <= len(self.controller.drones):
+                    drone = self.controller.drones[drone_id-1]
+                    drone.excute_tasks()  # 执行该无人机的任务
+                    print(f"无人机{drone_id}已执行其任务")
+                else:
+                    print(f"错误: 无人机ID {drone_id} 不存在")
+            
+            execute_window.destroy()
+            
+            # 更新显示
+            self.update_display()
+        
+        tk.Button(execute_window, text="确认执行", command=confirm_execution, bg="#2196F3", fg="white").pack(pady=10)
+    
+    
+    
     
     def create_control_page(self):
         # 无人机选择
@@ -568,6 +742,3 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = DroneControlGUI(root)
     root.mainloop()
-    
-    
-    

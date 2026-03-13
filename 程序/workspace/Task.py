@@ -48,9 +48,10 @@ class ComplexTask(Task):
             return False  # 没有子任务可执行，返回False结果
         for task in self.cost:
             if isinstance(task, SimpleTask):
-                if task.execute(resources) is not None:  # 如果子任务执行成功
+                res=task.execute(resources)  # 执行简单子任务
+                if res is not None:  # 如果子任务执行成功
                     self.cost.remove(task)  # 从列表中移除已执行的子任务
-                    return task.execute(resources)  # 返回子任务结果
+                    return res  # 返回子任务结果
             else:
                 res=task.execute(resources)  # 递归执行复杂子任务
                 if res == False:  # 如果复杂子任务执行完毕
@@ -79,9 +80,10 @@ class TaskManager:
             return 0,0
         for task in self.tasks:
             if isinstance(task, SimpleTask):
-                if task.execute(resources) is not None:  # 如果任务执行成功
+                res=task.execute(resources)  # 执行简单任务
+                if res is not None:  # 如果任务执行成功
                     self.tasks.remove(task)  # 从列表中移除已执行的任务
-                    return task.execute(resources)  # 返回任务结果
+                    return res  # 返回任务结果
             else:
                 res=task.execute(resources)  # 递归执行复杂任务
                 if res == False:  # 如果复杂任务执行完毕
@@ -89,6 +91,7 @@ class TaskManager:
                     continue  # 继续执行下一个任务
                 elif res is not None:  # 如果复杂任务执行成功
                     return res  # 返回复杂任务结果
+        return None  # 没有可执行的任务，返回None结果
     
     def create_simple_task(self, cost, time):
         print(f"创建简单任务: cost={cost}, time={time}")  

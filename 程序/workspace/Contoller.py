@@ -132,16 +132,11 @@ class Controller:
         print(f"创建复杂任务: {task_list}")
         return task
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    # 从全局任务列表中移除任务
+    def remove_task_from_global_list(self, task_index):
+        if 0 <= task_index < len(self.tasks.tasks):
+            removed_task = self.tasks.tasks.pop(task_index)
+            return removed_task
+        else:
+            print(f"错误: 任务索引 {task_index} 超出范围")
+            return None

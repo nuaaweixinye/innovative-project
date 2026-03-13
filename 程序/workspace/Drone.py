@@ -35,7 +35,7 @@ class Drone:
     def excute_tasks(self):
         self.update_resources()  # 更新资源信息
         res = self.TaskManager.execute(self.resorces)  # 执行任务并获取结果
-        while res is not None:  # 继续执行任务直到没有可执行的任务
+        while res is not None and res!=(0,0):  # 继续执行任务直到没有可执行的任务
             if res is not None:
                 self.resorces -= res[0]  # 更新资源
                 self.costs.append((res[0], time.time(), res[1]))  # 记录消耗的资源和时间
